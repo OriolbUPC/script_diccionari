@@ -1,7 +1,7 @@
 import docx2txt
 import re
 import csv
-
+import os
 
 def exception_found(line):
     if 'METEOROLOGIA [entrada actualitzada] huracà 1.' in line:
@@ -23,32 +23,65 @@ def exception_found(line):
 def treat_exceptions(data):
     if 'METEOROLOGIA [entrada actualitzada] huracà 1.' in line:
         word = 'huracà'
-        data[word] = []
-        data[word].append('Vent violent produït pels ciclons tropicals; més especialment pels del mar de les Antilles.')
-        data[word].append('El conjunt del cicló.')
-        data[word].append('En l’escala de Beaufort, vent de força 12, amb una velocitat mitjana de més de 32,7 metres per segon.')
+        data[word] = {}
+        data[word]['definition'] = []
+        data[word]['definition'].append('Vent violent produït pels ciclons tropicals; més especialment pels del mar de les Antilles.')
+        data[word]['definition'].append('El conjunt del cicló.')
+        data[word]['definition'].append('En l’escala de Beaufort, vent de força 12, amb una velocitat mitjana de més de 32,7 metres per segon.')
+
+        data[word]['lemma'] = lemmatize(word)
+        data[word]['def_lem'] = []
+        data[word]['def_lem'].append(lemmatize(data[word]['definition'][0]))
+        data[word]['def_lem'].append(lemmatize(data[word]['definition'][1]))
+        data[word]['def_lem'].append(lemmatize(data[word]['definition'][2]))
+
+        return word
 
     if 'NÚVOLS [entrada original] fracto-.' in line:
         word = 'fracto-'
-        data[word] = 'Prefix que es posa al nom d’alguns núvols per a indicar que són de formes esqueixades.'
+        data[word] = {}
+        data[word]['definition'] = 'Prefix que es posa al nom d’alguns núvols per a indicar que són de formes esqueixades.'
 
     if 'ALTRES ÀREES [entrada actualitzada] iso-.' in line:
         word = 'iso-'
-        data[word] = 'Prefix que significa ‘igual’ i s’usa, unit a altres mots, per a designar les línies o superfícies en les quals alguna variable meteorològica té el mateix valor.'
+        data[word] = {}
+        data[word]['definition'] = 'Prefix que significa ‘igual’ i s’usa, unit a altres mots, per a designar les línies o superfícies en les quals alguna variable meteorològica té el mateix valor.'
 
     if 'ALTRES ÀREES [entrada original] quasi-.' in line:
         word = 'quasi-'
-        data[word] = 'Prefix freqüentment usat davant un adjectiu, per a indicar que la condició expressada per a aquest es compleix aproximadament, però no exactament (depressió quasiestacionària; oscil·lació quasiperiòdica).'
+        data[word] = {}
+        data[word]['definition'] = 'Prefix freqüentment usat davant un adjectiu, per a indicar que la condició expressada per a aquest es compleix aproximadament, però no exactament (depressió quasiestacionària; oscil·lació quasiperiòdica).'
 
     if 'ALTRES ÀREES [entrada original] turbo-.' in line:
         word = 'turbo-'
-        data[word] = 'Prefix que s’anteposa al nom d’alguna propietat de l’aire per a indicar que és deguda o inherent a la turbulència (turbodifusivitat, turboviscositat, etc.).'
+        data[word] = {}
+        data[word]['definition'] = 'Prefix que s’anteposa al nom d’alguna propietat de l’aire per a indicar que és deguda o inherent a la turbulència (turbodifusivitat, turboviscositat, etc.).'
+
+    data[word]['lemma'] = lemmatize(word)
+    data[word]['def_lem'] = lemmatize(data[word]['definition'])
 
     return word
 
 
+def lemmatize(text):
+    output = os.popen('echo "' + text + '" | analyze -f /usr/share/freeling/config/ca.cfg --numb --noquant --nodate --outlv morfo').read().splitlines()
+    final_lemma = ''
+    for i, lema_line in enumerate(output):
+        if not lema_line:
+            continue
+
+        lemma = re.findall(r'(\S*)', output[i])[2]
+        if lemma == '|':
+            break
+        final_lemma += ' ' + lemma
+
+    print(final_lemma)
+
+    return final_lemma.strip()
+
+
 # Load the document
-doc_path = "/Users/oriol/Downloads/Vocabulari_meteo_DEFINITIU_11març(2).docx"
+doc_path = "/home/vboxuser/script_diccionari-main/Vocabulari_meteo_DEFINITIU_11març(2).docx"
 
 # Convertim docx en text pla
 text = docx2txt.process(doc_path)
@@ -99,30 +132,35 @@ word_regexs = [
 ]
 
 data = {}
-data2 = {}
 for line in lines:
     # Search definition
     for pattern in definition_regexs:
-        definition_found = re.search('(?<=' + pattern + ').*', line)
-        if definition_found:
+        definition_pattern_found = re.search('(?<=' + pattern + ').*', line)
+        if definition_pattern_found:
             break
 
     definition_pattern = pattern
 
-    if not definition_found:
+    # If we don't find a normal definition pattern it means it is one of those extra definitions of a word that is not specified as 1., 2., 3., etc. So we have to treat it.
+    if not definition_pattern_found:
         # Check exceptions
         if exception_found(line):
             word = treat_exceptions(data)
             continue
 
-        if isinstance(data[word], str):
-            data[word] += ' ' + line
+        # If we only hava one definition, we add the extra definition line
+        if isinstance(data[word]['definition'], str):
+            data[word]['definition'] += ' ' + line
+            data[word]['def_lem'] += ' ' + lemmatize(line)
         else:
-            data[word].append(line)
+            # If we have actual different definitions (1., 2., etc.) we append the extra definition in the list of definitions
+            data[word]['definition'].append(line)
+            data[word]['def_lem'].append(lemmatize(line))
 
         continue
-
-    definition = definition_found.group().strip()
+    else:
+        # We found a normal definition
+        definition = definition_pattern_found.group().strip()
 
     # Check whether it has more than one definition
     has_many_definitions = re.search(r'\| 2', definition)
@@ -152,26 +190,37 @@ for line in lines:
         word_found = re.search(pattern, line)
         if word_found:
             break
-
+    
     # Generate data
     if word_found:
         word = word_found.group().strip()
-        data[word] = definition
+        data[word] = {}
+        data[word]['lemma'] = lemmatize(word)
+        data[word]['definition'] = definition
+        data[word]['def_lem'] = lemmatize(definition)
 
         if has_many_definitions:
-            data[word] = []
-            data[word].append(def1)
-            data[word].append(def2)
+            data[word]['definition'] = []
+            data[word]['definition'].append(def1)
+            data[word]['definition'].append(def2)
+
+            data[word]['def_lem'] = []
+            data[word]['def_lem'].append(lemmatize(def1))
+            data[word]['def_lem'].append(lemmatize(def2))
+
             if def3:
-                data[word].append(def3)
+                data[word]['definition'].append(def3)
+                data[word]['def_lem'].append(lemmatize(def3))
             if def4:
-                data[word].append(def4)
+                data[word]['definition'].append(def4)
+                data[word]['def_lem'].append(lemmatize(def4))
+
 
 with open('diccionari.csv', 'w', newline='') as csvfile:
     writer = csv.writer(csvfile, delimiter=',')
-    writer.writerow(['Paraula', 'Definició'])
+    writer.writerow(['Paraula', 'Lema', 'Definició', 'Def_lema'])
     for word in data:
-        if isinstance(data[word], str):
-            writer.writerow([word] + ["['" + data[word] + "']"])
+        if isinstance(data[word]['definition'], str):
+            writer.writerow([word, data[word]['lemma']] + ["['" + data[word]['definition'] + "']", "['" + data[word]['def_lem'] + "']"])
         else:
-            writer.writerow([word] + [str(data[word])])
+            writer.writerow([word, data[word]['lemma']] + [str(data[word]['definition']), str(data[word]['def_lem'])])
